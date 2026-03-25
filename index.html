@@ -39,6 +39,7 @@
   .sync-btn:hover { border-color: var(--accent2); color: var(--accent2); }
   .sync-btn.syncing svg { animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
 
   .container { max-width: 900px; margin: 0 auto; padding: 20px 16px; }
   .toolbar { display: flex; gap: 10px; margin-bottom: 20px; }
@@ -78,7 +79,10 @@
   .badge-no  { background: rgba(255,79,106,0.1);  color: var(--danger);  border: 1px solid rgba(255,79,106,0.2); }
   .badge-wip { background: rgba(255,179,71,0.12); color: var(--warn);    border: 1px solid rgba(255,179,71,0.25); }
 
-  .actions { display: flex; gap: 6px; justify-content: flex-end; }
+  .badge-called    { background: rgba(79,142,255,0.12); color: var(--accent);  border: 1px solid rgba(79,142,255,0.25); }
+  .badge-notcalled { background: rgba(122,129,154,0.1); color: var(--muted);   border: 1px solid rgba(122,129,154,0.2); }
+  .toggle-opt.sel-called { background: rgba(79,142,255,0.12); border-color: var(--accent); color: var(--accent); }
+  .date-cell { font-size: 11px; color: var(--muted); white-space: nowrap; }
 
   .empty { text-align: center; padding: 60px 20px; color: var(--muted); }
   .empty svg { margin-bottom: 14px; opacity: 0.4; }
@@ -114,11 +118,6 @@
   .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px); background: var(--card2); border: 1px solid var(--accent); border-radius: 30px; padding: 12px 22px; font-size: 13px; color: var(--text); z-index: 999; transition: transform 0.3s cubic-bezier(.22,1,.36,1); white-space: nowrap; }
   .toast.show { transform: translateX(-50%) translateY(0); }
 
-  /* CONNECTION STATUS */
-  .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; }
-  .conn-dot.connected { background: var(--accent2); box-shadow: 0 0 6px var(--accent2); }
-  .conn-dot.error { background: var(--danger); }
-
   @media (max-width: 640px) { .hide-mobile { display: none; } td, th { padding: 10px 10px; } .logo { font-size: 18px; } }
   ::-webkit-scrollbar { width: 5px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -132,7 +131,6 @@
 <header>
   <div class="logo">Nét<span>imo</span> CRM</div>
   <div class="header-right">
-    <div class="stat-pill"><span class="conn-dot" id="connDot"></span> <b id="connLabel">…</b></div>
     <div class="stat-pill">Clients : <b id="totalCount">—</b></div>
     <div class="stat-pill" style="color:var(--accent2)">Faits : <b id="doneCount" style="color:var(--accent2)">—</b></div>
     <button class="sync-btn" id="syncBtn" onclick="loadClients()">
@@ -160,6 +158,8 @@
     <button class="filter-btn" onclick="setFilter('site_non', this)">⏳ Site à faire</button>
     <button class="filter-btn" onclick="setFilter('has_site', this)">🌐 Déjà un site</button>
     <button class="filter-btn" onclick="setFilter('no_site', this)">🚫 Pas de site</button>
+    <button class="filter-btn" onclick="setFilter('called', this)">📞 Appelés</button>
+    <button class="filter-btn" onclick="setFilter('not_called', this)">⏳ Non appelés</button>
   </div>
 
   <div class="results-count" id="resultsCount"></div>
@@ -172,7 +172,9 @@
           <th class="hide-mobile" onclick="sortBy('name')">Contact ↕</th>
           <th class="hide-mobile">Téléphone</th>
           <th>Site Nétimo</th>
-          <th>Site existant</th>
+          <th class="hide-mobile">Site existant</th>
+          <th>Appelé</th>
+          <th onclick="sortBy('createdAt')" title="Trier par date">Date ↕</th>
           <th></th>
         </tr>
       </thead>
@@ -200,8 +202,8 @@
           <input type="text" id="f_company" placeholder="ex: Plomberie Dupont">
         </div>
         <div class="form-group">
-          <label>Nom du contact *</label>
-          <input type="text" id="f_name" placeholder="ex: Jean Dupont">
+          <label>Nom du contact</label>
+          <input type="text" id="f_name" placeholder="ex: Jean Dupont (optionnel)">
         </div>
       </div>
       <div class="form-group">
@@ -224,6 +226,13 @@
         </div>
       </div>
       <div class="form-group">
+        <label>Appelé ?</label>
+        <div class="toggle-group" style="grid-template-columns:1fr 1fr">
+          <div class="toggle-opt" id="opt_called_yes" onclick="selectCalled('yes')">📞 Oui</div>
+          <div class="toggle-opt" id="opt_called_no"  onclick="selectCalled('no')">⏳ Pas encore</div>
+        </div>
+      </div>
+      <div class="form-group">
         <label>Notes</label>
         <textarea id="f_notes" placeholder="Informations supplémentaires…"></textarea>
       </div>
@@ -237,12 +246,12 @@
 
 <div class="toast" id="toast"></div>
 
-<!-- Firebase SDK -->
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getDatabase, ref, set, get, remove, onValue } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+<!-- Firebase SDK (compat = fonctionne sans npm, directement dans le navigateur) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 
-  // ---- CONFIG FIREBASE ----
+<script>
+  // ── CONFIG FIREBASE ──────────────────────────────────────────
   const firebaseConfig = {
     apiKey: "AIzaSyArVt5QPC1mE4l27lOngHYpF_Pjz_KlDqQ",
     authDomain: "netimo-crm-2fecc.firebaseapp.com",
@@ -252,59 +261,55 @@
     messagingSenderId: "430065822991",
     appId: "1:430065822991:web:938a655fdd36d31747627a"
   };
-
-  const app = initializeApp(firebaseConfig);
-  const db = getDatabase(app);
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.firestore();
+  const colRef = db.collection("clients");
+  // ─────────────────────────────────────────────────────────────
 
   let clients = [];
   let editId = null;
   let currentFilter = 'all';
-  let currentSort = { key: 'company', asc: true };
+  let currentSort = { key: 'createdAt', asc: false };
   let selectedStatus = 'no';
   let selectedHasSite = 'no';
+  let selectedCalled = 'no';
 
-  // ---- CONNECTION STATUS ----
-  const dot = document.getElementById('connDot');
-  const connLabel = document.getElementById('connLabel');
-
-  import { ref as dbRef, onValue as dbOnValue } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-  const connectedRef = ref(db, '.info/connected');
-  onValue(connectedRef, (snap) => {
-    if (snap.val() === true) {
-      dot.className = 'conn-dot connected';
-      connLabel.textContent = 'En ligne';
-    } else {
-      dot.className = 'conn-dot error';
-      connLabel.textContent = 'Hors ligne';
-    }
-  });
-
-  // ---- LOAD ----
-  window.loadClients = async function() {
-    setLoading(true);
-    try {
-      const snapshot = await get(ref(db, 'clients'));
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        clients = Object.values(data);
-      } else {
-        clients = [];
+  // ---- SYNC TEMPS RÉEL ----
+  // onSnapshot : tous les appareils se mettent à jour instantanément
+  function startRealtimeSync() {
+    setSyncStatus('connecting');
+    colRef.onSnapshot(
+      (snapshot) => {
+        clients = snapshot.docs.map(doc => {
+          const d = doc.data();
+          // Convertit le Timestamp Firestore en ms si nécessaire
+          const createdAt = d.createdAt?.toMillis ? d.createdAt.toMillis() : (d.createdAt || null);
+          return { id: doc.id, ...d, createdAt };
+        });
+        render();
+        setSyncStatus('live');
+      },
+      (err) => {
+        console.error(err);
+        setSyncStatus('error');
+        showToast('❌ Erreur Firebase : ' + err.message);
       }
-      render();
-      showToast('✅ Données synchronisées');
-    } catch(e) {
-      showToast('❌ Erreur de connexion Firebase');
-      console.error(e);
-    }
-    setLoading(false);
+    );
   }
 
-  function setLoading(on) {
-    const bar = document.getElementById('loadingBar');
+  function setSyncStatus(state) {
     const btn = document.getElementById('syncBtn');
-    bar.style.width = on ? '80%' : '100%';
-    btn.classList.toggle('syncing', on);
-    if (!on) setTimeout(() => bar.style.width = '0%', 400);
+    if (state === 'live') {
+      btn.innerHTML = `<span style="width:7px;height:7px;border-radius:50%;background:var(--accent2);box-shadow:0 0 6px var(--accent2);animation:pulse 2s infinite;display:inline-block"></span> En direct`;
+      btn.style.color = 'var(--accent2)';
+      btn.style.borderColor = 'rgba(0,229,192,0.3)';
+      btn.onclick = null;
+    } else if (state === 'error') {
+      btn.innerHTML = `<span style="width:7px;height:7px;border-radius:50%;background:var(--danger);display:inline-block"></span> Hors ligne`;
+      btn.style.color = 'var(--danger)';
+    } else {
+      btn.innerHTML = `<svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg> Connexion…`;
+    }
   }
 
   // ---- RENDER ----
@@ -315,14 +320,21 @@
                     (c.name||'').toLowerCase().includes(q) ||
                     (c.tel||'').includes(q);
       if (!match) return false;
-      if (currentFilter === 'site_oui') return c.status === 'yes';
-      if (currentFilter === 'site_non') return c.status !== 'yes';
-      if (currentFilter === 'has_site') return c.hasSite === 'yes';
-      if (currentFilter === 'no_site') return c.hasSite === 'no';
+      if (currentFilter === 'site_oui')   return c.status === 'yes';
+      if (currentFilter === 'site_non')   return c.status !== 'yes';
+      if (currentFilter === 'has_site')   return c.hasSite === 'yes';
+      if (currentFilter === 'no_site')    return c.hasSite === 'no';
+      if (currentFilter === 'called')     return c.called === 'yes';
+      if (currentFilter === 'not_called') return c.called !== 'yes';
       return true;
     });
 
     list.sort((a, b) => {
+      if (currentSort.key === 'createdAt') {
+        const ta = a.createdAt || 0;
+        const tb = b.createdAt || 0;
+        return currentSort.asc ? ta - tb : tb - ta;
+      }
       let va = (a[currentSort.key]||'').toLowerCase();
       let vb = (b[currentSort.key]||'').toLowerCase();
       return currentSort.asc ? va.localeCompare(vb) : vb.localeCompare(va);
@@ -349,7 +361,9 @@
           ${c.tel ? `<a class="tel-link" href="tel:${c.tel}">${esc(c.tel)}</a>` : '<span style="color:var(--muted)">—</span>'}
         </td>
         <td>${statusBadge(c.status)}</td>
-        <td>${hasSiteBadge(c.hasSite)}</td>
+        <td class="hide-mobile">${hasSiteBadge(c.hasSite)}</td>
+        <td>${calledBadge(c.called)}</td>
+        <td class="hide-mobile date-cell">${formatDate(c.createdAt)}</td>
         <td>
           <div class="actions">
             <button class="btn btn-ghost btn-sm" onclick="openEdit('${c.id}')">✏️</button>
@@ -366,6 +380,18 @@
     return '<span class="badge badge-no">🔲 À faire</span>';
   }
 
+  function calledBadge(s) {
+    if (s === 'yes') return '<span class="badge badge-called">📞 Oui</span>';
+    return '<span class="badge badge-notcalled">⏳ Non</span>';
+  }
+
+  function formatDate(ts) {
+    if (!ts) return '<span style="color:var(--muted)">—</span>';
+    const d = new Date(ts);
+    const pad = n => String(n).padStart(2,'0');
+    return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()}<br><span style="font-size:10px;opacity:0.6">${pad(d.getHours())}:${pad(d.getMinutes())}</span>`;
+  }
+
   function hasSiteBadge(s) {
     if (s === 'yes') return '<span class="badge badge-yes">🌐 Oui</span>';
     if (s === 'no')  return '<span class="badge badge-no">🚫 Non</span>';
@@ -377,24 +403,25 @@
   }
 
   // ---- FILTER / SORT ----
-  window.setFilter = function(f, btn) {
+  function setFilter(f, btn) {
     currentFilter = f;
     document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     render();
   }
 
-  window.sortBy = function(key) {
+  function sortBy(key) {
     if (currentSort.key === key) currentSort.asc = !currentSort.asc;
     else { currentSort.key = key; currentSort.asc = true; }
     render();
   }
 
   // ---- MODAL ----
-  window.openModal = function() {
+  function openModal() {
     editId = null;
     selectedStatus = 'no';
     selectedHasSite = 'no';
+    selectedCalled = 'no';
     document.getElementById('modalTitle').textContent = 'Nouveau client';
     document.getElementById('f_company').value = '';
     document.getElementById('f_name').value = '';
@@ -404,12 +431,13 @@
     document.getElementById('overlay').classList.add('open');
   }
 
-  window.openEdit = function(id) {
+  function openEdit(id) {
     const c = clients.find(x => x.id == id);
     if (!c) return;
     editId = id;
     selectedStatus = c.status || 'no';
     selectedHasSite = c.hasSite || 'no';
+    selectedCalled = c.called || 'no';
     document.getElementById('modalTitle').textContent = 'Modifier client';
     document.getElementById('f_company').value = c.company || '';
     document.getElementById('f_name').value = c.name || '';
@@ -419,11 +447,12 @@
     document.getElementById('overlay').classList.add('open');
   }
 
-  window.closeModal = function() { document.getElementById('overlay').classList.remove('open'); }
-  window.maybeClose = function(e) { if (e.target === document.getElementById('overlay')) closeModal(); }
+  function closeModal() { document.getElementById('overlay').classList.remove('open'); }
+  function maybeClose(e) { if (e.target === document.getElementById('overlay')) closeModal(); }
 
-  window.selectStatus = function(v) { selectedStatus = v; refreshToggles(); }
-  window.selectHasSite = function(v) { selectedHasSite = v; refreshToggles(); }
+  function selectStatus(v) { selectedStatus = v; refreshToggles(); }
+  function selectHasSite(v) { selectedHasSite = v; refreshToggles(); }
+  function selectCalled(v) { selectedCalled = v; refreshToggles(); }
 
   function refreshToggles() {
     ['yes','no','wip'].forEach(v => {
@@ -434,42 +463,46 @@
       const el = document.getElementById('opt_has_' + v);
       el.className = 'toggle-opt' + (selectedHasSite === v ? ' sel-' + v : '');
     });
+    ['yes','no'].forEach(v => {
+      const el = document.getElementById('opt_called_' + v);
+      el.className = 'toggle-opt' + (selectedCalled === v ? (v === 'yes' ? ' sel-called' : ' sel-no') : '');
+    });
   }
 
   // ---- SAVE ----
-  window.saveClient = async function() {
+  async function saveClient() {
     const company = document.getElementById('f_company').value.trim();
     const name    = document.getElementById('f_name').value.trim();
-    if (!company || !name) { showToast("⚠️ Renseignez l'entreprise et le contact"); return; }
+    if (!company) { showToast('⚠️ Renseignez au moins le nom de l\'entreprise'); return; }
 
     const btn = document.getElementById('saveBtn');
     btn.textContent = 'Enregistrement…';
     btn.disabled = true;
 
-    const id = editId || Date.now().toString();
     const data = {
-      id, company, name,
+      company, name,
       tel:     document.getElementById('f_tel').value.trim(),
       notes:   document.getElementById('f_notes').value.trim(),
       status:  selectedStatus || 'no',
       hasSite: selectedHasSite || 'no',
+      called:  selectedCalled || 'no',
     };
 
     try {
-      await set(ref(db, 'clients/' + id), data);
       if (editId) {
-        const idx = clients.findIndex(c => c.id == editId);
-        clients[idx] = data;
-        showToast('✅ Client modifié et synchronisé');
+        // Garde la date de création d'origine
+        await colRef.doc(editId).update(data);
+        showToast('✅ Client modifié — sync instantanée');
       } else {
-        clients.push(data);
-        showToast('✅ Client ajouté et synchronisé');
+        // Enregistre la date de création côté serveur Firebase
+        data.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+        await colRef.add(data);
+        showToast('✅ Client ajouté — sync instantanée');
       }
-      render();
       closeModal();
     } catch(e) {
-      showToast('❌ Erreur lors de la sauvegarde');
       console.error(e);
+      showToast('❌ Erreur : ' + e.message);
     }
 
     btn.textContent = 'Enregistrer';
@@ -477,16 +510,13 @@
   }
 
   // ---- DELETE ----
-  window.deleteClient = async function(id) {
+  async function deleteClient(id) {
     if (!confirm('Supprimer ce client ?')) return;
     try {
-      await remove(ref(db, 'clients/' + id));
-      clients = clients.filter(c => c.id != id);
-      render();
+      await colRef.doc(id).delete();
       showToast('🗑️ Client supprimé');
     } catch(e) {
       showToast('❌ Erreur lors de la suppression');
-      console.error(e);
     }
   }
 
@@ -500,7 +530,7 @@
 
   // ---- INIT ----
   document.getElementById('searchInput').addEventListener('input', render);
-  loadClients();
+  startRealtimeSync();
 </script>
 </body>
 </html>
