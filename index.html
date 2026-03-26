@@ -4,7 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Nétimo — CRM</title>
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://www.gstatic.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet"></noscript>
 <style>
   :root {
     --bg: #0d0f14;
@@ -440,8 +444,8 @@
 
 <div class="toast" id="toast"></div>
 
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script defer src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script defer src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 
 <script>
   // ── CONFIG FIREBASE ───────────────────────────────────────────
@@ -454,9 +458,8 @@
     messagingSenderId: "430065822991",
     appId: "1:430065822991:web:938a655fdd36d31747627a"
   };
-  firebase.initializeApp(firebaseConfig);
-  const db = firebase.firestore();
-  const colRef = db.collection("clients");
+  // db et colRef initialisés après chargement Firebase (voir window.load)
+  let db, colRef;
   // ─────────────────────────────────────────────────────────────
 
   let clients = [];
@@ -621,7 +624,7 @@
     empty.style.display = 'none';
 
     tbody.innerHTML = list.map(c => `
-      <tr>
+      <tr style="${c.called === 'yes' ? 'background:rgba(79,142,255,0.04);' : ''}">
         <td>
           <div class="company-name">${esc(c.company)}</div>
           <div class="contact-name">${c.name ? esc(c.name) : ''}</div>
@@ -632,7 +635,7 @@
         </td>
         <td>${statusBadge(c.status)}</td>
         <td class="hide-mobile">${hasSiteBadge(c.hasSite)}</td>
-        <td>${calledBadge(c.called)}</td>
+        <td>${calledToggle(c.id, c.called)}</td>
         <td class="hide-mobile date-cell">${formatDate(c.createdAt)}</td>
         <td>
           <div class="actions">
@@ -649,9 +652,22 @@
     if (s === 'wip') return '<span class="badge badge-wip">⏳ En cours</span>';
     return '<span class="badge badge-no">🔲 À faire</span>';
   }
-  function calledBadge(s) {
-    if (s === 'yes') return '<span class="badge badge-called">📞 Oui</span>';
-    return '<span class="badge badge-notcalled">⏳ Non</span>';
+  function calledToggle(id, s) {
+    const isCalled = s === 'yes';
+    return `<button
+      onclick="toggleCalled('${id}')"
+      title="${isCalled ? 'Marquer comme non appelé' : 'Marquer comme appelé'}"
+      style="
+        background:${isCalled ? 'rgba(79,142,255,0.12)' : 'rgba(122,129,154,0.1)'};
+        border:1px solid ${isCalled ? 'rgba(79,142,255,0.35)' : 'rgba(122,129,154,0.25)'};
+        color:${isCalled ? 'var(--accent)' : 'var(--muted)'};
+        border-radius:20px; padding:4px 10px; font-size:11px; font-weight:600;
+        cursor:pointer; transition:all 0.15s; font-family:'DM Sans',sans-serif;
+        display:inline-flex; align-items:center; gap:5px; white-space:nowrap;
+      "
+      onmouseover="this.style.transform='scale(1.06)'"
+      onmouseout="this.style.transform='scale(1)'"
+    >${isCalled ? '📞 Appelé' : '⏳ À appeler'}</button>`;
   }
   function hasSiteBadge(s) {
     if (s === 'yes') return '<span class="badge badge-yes">🌐 Oui</span>';
@@ -753,7 +769,24 @@
     btn.textContent = 'Enregistrer'; btn.disabled = false;
   }
 
-  // ---- DELETE ----
+  // ---- TOGGLE APPELÉ (direct depuis le tableau, sans recharger) ----
+  async function toggleCalled(id) {
+    const c = clients.find(x => x.id === id);
+    if (!c) return;
+    const newVal = c.called === 'yes' ? 'no' : 'yes';
+    // Mise à jour optimiste locale immédiate
+    c.called = newVal;
+    render();
+    // Puis sync Firebase en arrière-plan
+    try {
+      await colRef.doc(id).update({ called: newVal });
+    } catch(e) {
+      // Rollback si erreur
+      c.called = newVal === 'yes' ? 'no' : 'yes';
+      render();
+      showToast('❌ Erreur de mise à jour');
+    }
+  }
   async function deleteClient(id) {
     if (!confirm('Supprimer ce client ?')) return;
     try {
@@ -773,7 +806,13 @@
 
   // ---- INIT ----
   document.getElementById('searchInput').addEventListener('input', render);
-  loadClients();
+  // defer oblige à attendre que Firebase soit chargé avant d'initialiser
+  window.addEventListener('load', () => {
+    firebase.initializeApp(firebaseConfig);
+    db = firebase.firestore();
+    colRef = db.collection("clients");
+    loadClients();
+  });
 </script>
 </body>
 </html>
