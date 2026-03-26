@@ -274,42 +274,31 @@
   let selectedHasSite = 'no';
   let selectedCalled = 'no';
 
-  // ---- SYNC TEMPS RÉEL ----
-  // onSnapshot : tous les appareils se mettent à jour instantanément
-  function startRealtimeSync() {
-    setSyncStatus('connecting');
-    colRef.onSnapshot(
-      (snapshot) => {
-        clients = snapshot.docs.map(doc => {
-          const d = doc.data();
-          // Convertit le Timestamp Firestore en ms si nécessaire
-          const createdAt = d.createdAt?.toMillis ? d.createdAt.toMillis() : (d.createdAt || null);
-          return { id: doc.id, ...d, createdAt };
-        });
-        render();
-        setSyncStatus('live');
-      },
-      (err) => {
-        console.error(err);
-        setSyncStatus('error');
-        showToast('❌ Erreur Firebase : ' + err.message);
-      }
-    );
+  // ---- CHARGEMENT MANUEL ----
+  async function loadClients() {
+    setLoading(true);
+    try {
+      const snapshot = await colRef.get();
+      clients = snapshot.docs.map(doc => {
+        const d = doc.data();
+        const createdAt = d.createdAt?.toMillis ? d.createdAt.toMillis() : (d.createdAt || null);
+        return { id: doc.id, ...d, createdAt };
+      });
+      render();
+      showToast('✅ Données synchronisées');
+    } catch(e) {
+      console.error(e);
+      showToast('❌ Erreur de connexion');
+    }
+    setLoading(false);
   }
 
-  function setSyncStatus(state) {
+  function setLoading(on) {
+    const bar = document.getElementById('loadingBar');
     const btn = document.getElementById('syncBtn');
-    if (state === 'live') {
-      btn.innerHTML = `<span style="width:7px;height:7px;border-radius:50%;background:var(--accent2);box-shadow:0 0 6px var(--accent2);animation:pulse 2s infinite;display:inline-block"></span> En direct`;
-      btn.style.color = 'var(--accent2)';
-      btn.style.borderColor = 'rgba(0,229,192,0.3)';
-      btn.onclick = null;
-    } else if (state === 'error') {
-      btn.innerHTML = `<span style="width:7px;height:7px;border-radius:50%;background:var(--danger);display:inline-block"></span> Hors ligne`;
-      btn.style.color = 'var(--danger)';
-    } else {
-      btn.innerHTML = `<svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg> Connexion…`;
-    }
+    bar.style.width = on ? '80%' : '100%';
+    btn.classList.toggle('syncing', on);
+    if (!on) setTimeout(() => bar.style.width = '0%', 400);
   }
 
   // ---- RENDER ----
@@ -490,16 +479,15 @@
 
     try {
       if (editId) {
-        // Garde la date de création d'origine
         await colRef.doc(editId).update(data);
-        showToast('✅ Client modifié — sync instantanée');
+        showToast('✅ Client modifié');
       } else {
-        // Enregistre la date de création côté serveur Firebase
         data.createdAt = firebase.firestore.FieldValue.serverTimestamp();
         await colRef.add(data);
-        showToast('✅ Client ajouté — sync instantanée');
+        showToast('✅ Client ajouté');
       }
       closeModal();
+      loadClients();
     } catch(e) {
       console.error(e);
       showToast('❌ Erreur : ' + e.message);
@@ -515,6 +503,7 @@
     try {
       await colRef.doc(id).delete();
       showToast('🗑️ Client supprimé');
+      loadClients();
     } catch(e) {
       showToast('❌ Erreur lors de la suppression');
     }
@@ -530,7 +519,7 @@
 
   // ---- INIT ----
   document.getElementById('searchInput').addEventListener('input', render);
-  startRealtimeSync();
+  loadClients();
 </script>
 </body>
 </html>
